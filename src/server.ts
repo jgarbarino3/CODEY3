@@ -38,6 +38,10 @@ import {
 import { SingleUserOAuthProvider } from "./oauth-provider.js";
 import { ProcessSessionManager, type ProcessSnapshot } from "./process-sessions.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
+import {
+  createWorkspaceActivityManager,
+  type WorkspaceActivityManager,
+} from "./workspace-activity.js";
 import { formatPathForPrompt } from "./skills.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
@@ -105,9 +109,10 @@ type ToolWidgetKind =
   | "show_changes";
 
 interface ToolDefinitionMeta extends Record<string, unknown> {
+  "openai/outputTemplate": string;
   ui: {
     resourceUri: string;
-    visibility: ["model"];
+    visibility: ["model", "app"];
   };
 }
 
@@ -124,7 +129,7 @@ function shouldAttachWidget(mode: WidgetMode, kind: ToolWidgetKind): boolean {
     case "off":
       return false;
     case "changes":
-      return kind === "workspace" || kind === "show_changes";
+      return kind === "show_changes";
     case "full":
       return true;
   }
@@ -140,8 +145,9 @@ function toolWidgetDescriptorMeta(
     _meta: {
       ui: {
         resourceUri: WORKSPACE_APP_URI,
-        visibility: ["model"],
+        visibility: ["model", "app"],
       },
+      "openai/outputTemplate": WORKSPACE_APP_URI,
     },
   };
 }
@@ -167,12 +173,16 @@ interface ToolLogFields {
   success: boolean;
   durationMs: number;
   error?: string;
+  additions?: number;
+  removals?: number;
 }
+
+const workspaceActivitiesByConfig = new WeakMap<ServerConfig, WorkspaceActivityManager>();
 
 function serverInstructions(config: ServerConfig): string {
   const showChangesInstruction =
     config.widgets === "changes"
-      ? " If the turn successfully modifies files by creating, editing, overwriting, deleting, moving, or applying patches, call show_changes exactly once for that workspace after the final related file change and before your final response so the user can inspect the aggregate diff for that turn. Do not call it after every individual file change; do not skip it because individual file-change tools already returned diffs."
+      ? " If the turn successfully modifies files by creating, editing, overwriting, deleting, moving, or applying patches, call show_changes exactly once for that workspace after the final related file change and before your final response so the user can inspect one aggregate activity card. Do not call it after every individual file change. Use report_progress only for concise, user-facing milestones (for example, what changed, a blocked check, or a successful verification). Never use it to expose private reasoning, raw commands, tokens, or secrets."
       : "";
 
   if (config.toolMode === "codex") {
@@ -293,6 +303,7 @@ function requestLogFields(req: Request, config: ServerConfig): Record<string, un
 }
 
 function logToolCall(config: ServerConfig, fields: ToolLogFields): void {
+  workspaceActivitiesByConfig.get(config)?.recordToolCall(fields);
   if (!config.logging.toolCalls) return;
 
   const { command, ...safeFields } = fields;
@@ -535,6 +546,8 @@ function registerCodexProcessTools(
   workspaces: WorkspaceRegistry,
   processSessions: ProcessSessionManager,
 ): void {
+  const commandBySession = new Map<number, string>();
+
   registerAppTool(
     server,
     "exec_command",
@@ -589,6 +602,9 @@ function registerCodexProcessTools(
         yieldTimeMs,
         maxOutputTokens,
       });
+      if (snapshot.running && snapshot.sessionId !== undefined) {
+        commandBySession.set(snapshot.sessionId, cmd);
+      }
 
       logToolCall(config, {
         tool: "exec_command",
@@ -596,7 +612,7 @@ function registerCodexProcessTools(
         workingDirectory: workingDirectory ?? ".",
         command: cmd,
         commandLength: cmd.length,
-        success: true,
+        success: snapshot.running || snapshot.exitCode === 0,
         durationMs: Math.round(performance.now() - startedAt),
       });
 
@@ -654,11 +670,14 @@ function registerCodexProcessTools(
         yieldTimeMs,
         maxOutputTokens,
       });
+      const command = commandBySession.get(sessionId);
+      if (!snapshot.running) commandBySession.delete(sessionId);
 
       logToolCall(config, {
         tool: "write_stdin",
         workspaceId,
-        success: true,
+        command,
+        success: snapshot.running || snapshot.exitCode === 0,
         durationMs: Math.round(performance.now() - startedAt),
       });
 
@@ -777,6 +796,7 @@ function createMcpServer(
     async ({ path, mode, baseRef }) => {
       const startedAt = performance.now();
       const { workspace, agentsFiles, availableAgentsFiles } = await workspaces.openWorkspace({ path, mode, baseRef });
+      workspaceActivitiesByConfig.get(config)?.initializeWorkspace({ workspaceId: workspace.id });
       if (config.widgets === "changes") {
         void reviewCheckpoints.initializeWorkspace({
           workspaceId: workspace.id,
@@ -1030,6 +1050,8 @@ function createMcpServer(
         tool: toolNames.write,
         workspaceId,
         path: input.path,
+        additions: stats.additions,
+        removals: stats.removals,
         success: true,
         durationMs: Math.round(performance.now() - startedAt),
       });
@@ -1119,6 +1141,8 @@ function createMcpServer(
         tool: toolNames.edit,
         workspaceId,
         path: input.path,
+        additions: stats.additions,
+        removals: stats.removals,
         success: true,
         durationMs: Math.round(performance.now() - startedAt),
       });
@@ -1190,6 +1214,8 @@ function createMcpServer(
         logToolCall(config, {
           tool: "apply_patch",
           workspaceId,
+          additions: applied.additions,
+          removals: applied.removals,
           success: true,
           durationMs: Math.round(performance.now() - startedAt),
         });
@@ -1223,11 +1249,37 @@ function createMcpServer(
   if (config.widgets === "changes") {
     registerAppTool(
       server,
+      "report_progress",
+      {
+        title: "Report progress",
+        description:
+          "Add one concise, user-facing milestone to the end-of-turn activity card. Use sparingly for meaningful progress, a blocker, or completion. Do not include private reasoning, raw commands, tokens, credentials, or file contents.",
+        inputSchema: {
+          workspaceId: z.string().describe("Workspace identifier returned by open_workspace."),
+          status: z.enum(["working", "blocked", "complete"]),
+          summary: z.string().min(1).max(180).describe("Short user-facing progress update."),
+        },
+        outputSchema: resultOutputSchema(),
+        _meta: {},
+        annotations: { readOnlyHint: true },
+      },
+      async ({ workspaceId, status, summary }) => {
+        workspaces.getWorkspace(workspaceId);
+        workspaceActivitiesByConfig.get(config)?.reportProgress({ workspaceId, status, summary });
+        return {
+          content: [textBlock("Progress recorded for the end-of-turn activity card.")],
+          structuredContent: { result: "Progress recorded." },
+        };
+      },
+    );
+
+    registerAppTool(
+      server,
       "show_changes",
       {
         title: "Show changes",
         description:
-          "Show aggregate file changes for an open workspace. If the current turn successfully modified files, call this exactly once after the final related file change and before your final response so the user can inspect the combined diff for the turn. Do not call it after every individual file change, and do not skip it because prior file-change tools already displayed per-tool diffs.",
+          "Show one end-of-turn activity card for an open workspace. It summarizes the completed work and aggregate file changes, with raw diff details available on demand. If the current turn successfully modified files, call this exactly once after the final related file change and before your final response. Do not call it after every individual file change.",
         inputSchema: {
           workspaceId: z
             .string()
@@ -1246,6 +1298,10 @@ function createMcpServer(
           since: "last_shown",
           markReviewed: true,
         });
+        const activity = workspaceActivitiesByConfig.get(config)?.snapshot({
+          workspaceId,
+          acknowledge: true,
+        });
 
         const content = [textBlock(review.result)];
         logToolCall(config, {
@@ -1263,6 +1319,7 @@ function createMcpServer(
               workspaceId,
               summary: review.summary,
               files: review.files,
+              activity,
               payload: {
                 patch: review.patch,
               },
@@ -1606,6 +1663,8 @@ export function createServer(config = loadConfig()): RunningServer {
   const workspaceStore = createWorkspaceStore(config.stateDir);
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
+  const workspaceActivities = createWorkspaceActivityManager();
+  workspaceActivitiesByConfig.set(config, workspaceActivities);
   const processSessions = new ProcessSessionManager();
   const localAgentProviders = config.subagents
     ? getLocalAgentProviderAvailabilitySnapshot()
@@ -1769,6 +1828,7 @@ export function createServer(config = loadConfig()): RunningServer {
       processSessions.shutdown();
       oauthProvider.close();
       workspaceStore.close?.();
+      workspaceActivitiesByConfig.delete(config);
     },
   };
 }

@@ -23,3 +23,11 @@ assert.equal(
   true,
 );
 assert.equal(isExpandableCard({ tool: "apply_patch" }), false);
+
+assert.equal(
+  isExpandableCard({
+    tool: "show_changes",
+    activity: { events: [{ title: "Updated files", status: "success" }] },
+  }),
+  true,
+);

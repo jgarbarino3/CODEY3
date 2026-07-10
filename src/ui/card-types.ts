@@ -25,6 +25,20 @@ export interface ToolResultCard {
   root?: string;
   status?: string;
   summary?: Record<string, unknown>;
+  activity?: {
+    status?: "complete" | "attention";
+    events?: Array<{
+      id?: string;
+      kind?: "workspace" | "inspect" | "change" | "validate" | "narration";
+      status?: "success" | "failure" | "working" | "blocked" | "complete";
+      title?: string;
+      path?: string;
+      additions?: number;
+      removals?: number;
+      durationMs?: number;
+      createdAt?: string;
+    }>;
+  };
   files?: Array<{
     path?: string;
     previousPath?: string;
@@ -145,7 +159,9 @@ export function isExpandableCard(card: ToolResultCard): boolean {
     );
   }
 
-  if (isReviewTool(card.tool)) return Boolean(card.files?.length || card.payload?.patch);
+  if (isReviewTool(card.tool)) {
+    return Boolean(card.files?.length || card.payload?.patch || card.activity?.events?.length);
+  }
   if (isPatchTool(card.tool)) return Boolean(card.payload?.patch);
 
   return Boolean(card.payload);

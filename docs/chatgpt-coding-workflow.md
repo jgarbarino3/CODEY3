@@ -156,12 +156,21 @@ In that mode, DevSpace attaches widget UI to the exposed workspace, file, edit,
 and shell tools. The aggregate `show_changes` tool is not exposed by default.
 
 Use `DEVSPACE_WIDGETS=off` to disable widget UI, or `DEVSPACE_WIDGETS=changes`
-to expose the aggregate show-changes flow.
+to expose the aggregate show-changes flow. In `changes` mode, only
+`show_changes` attaches an app card: the regular workspace and file tools stay
+out of the conversation chrome so a completed turn reads as one activity card,
+not a stack of blank widget containers.
 
 When `show_changes` is exposed, models should call it exactly once after the
 final file modification in any turn that changes files. The tool only requires
 the `workspaceId`; DevSpace automatically compares against the last shown
 checkpoint and advances that checkpoint after rendering the aggregate diff.
+
+The optional `report_progress` tool adds a brief human-facing milestone to that
+same end-of-turn card. It is for concise status such as what changed, a blocked
+check, or a successful validation—not private reasoning, raw commands, file
+contents, secrets, or tokens. The card shows a compact activity timeline and
+file deltas first; the raw diff is behind an explicit control.
 
 ## Shell Use
 

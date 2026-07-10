@@ -50,6 +50,7 @@ let hostContext: HostContext | undefined;
 let card: ToolResultCard | null = null;
 let expanded = false;
 let reviewFilesExpanded = false;
+let reviewDetailsExpanded = false;
 let errorMessage: string | null = null;
 let currentPayload: MountedPayload | null = null;
 let currentPayloadContainer: HTMLElement | null = null;
@@ -84,6 +85,7 @@ async function boot(): Promise<void> {
       card = null;
       expanded = false;
       reviewFilesExpanded = false;
+      reviewDetailsExpanded = false;
       errorMessage = "No result card is available for this tool result.";
       render();
       return;
@@ -92,6 +94,7 @@ async function boot(): Promise<void> {
     card = { ...structured, tool };
     expanded = false;
     reviewFilesExpanded = false;
+    reviewDetailsExpanded = false;
     errorMessage = null;
     render();
   };
@@ -220,6 +223,7 @@ function renderEmpty(message: string, tone: "muted" | "error" = "muted"): void {
 
 async function renderPayloadIfNeeded(): Promise<void> {
   if (!card || !currentPayloadContainer || (!expanded && !isReviewTool(card.tool))) return;
+  if (isReviewTool(card.tool) && !reviewDetailsExpanded) return;
 
   const target = currentPayloadContainer;
 
@@ -243,7 +247,7 @@ async function renderPayloadIfNeeded(): Promise<void> {
 
     try {
       const { mountHeavyPayload } = await import("./heavy-payload.js");
-      if (target !== currentPayloadContainer || !expanded || !card) return;
+      if (target !== currentPayloadContainer || (!expanded && !isReviewTool(card.tool)) || !card) return;
 
       setPayloadLoading(target, false);
       currentPayload = mountHeavyPayload(target, {
@@ -252,7 +256,7 @@ async function renderPayloadIfNeeded(): Promise<void> {
         errorMessage,
       });
     } catch (loadError) {
-      if (target !== currentPayloadContainer || !expanded) return;
+      if (target !== currentPayloadContainer || (!expanded && !isReviewTool(card.tool))) return;
 
       setPayloadLoading(target, false);
       renderStatus(
@@ -391,25 +395,67 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
 
   const files = card.files ?? [];
   const summary = card.summary ?? {};
+  const activity = card.activity;
+  const events = activity?.events ?? [];
   const visibleFiles = reviewFilesExpanded ? files : files.slice(0, 3);
   const hiddenCount = Math.max(0, files.length - visibleFiles.length);
   const main = element("main", { className: "shell" });
-  const section = element("section", { className: "tool-card review" });
-  const header = element("div", { className: "review-header" });
+  const section = element("section", { className: "tool-card review codex-activity-card" });
+  const header = element("div", { className: "review-header codex-activity-header" });
   const icon = element("span", { className: "tool-icon", ariaHidden: "true" });
   icon.innerHTML = display.icon;
   const titleGroup = element("div", { className: "review-title-group" });
 
   titleGroup.append(
-    element("span", { className: "tool-title", text: display.title }),
-    element("span", { className: "tool-label", text: display.label, title: display.label }),
+    element("span", { className: "tool-title", text: "Codey activity" }),
+    element("span", {
+      className: "tool-label",
+      text: activity?.status === "attention" ? "Review needs attention" : "Workspace activity and changes",
+      title: display.label,
+    }),
   );
-  header.append(icon, titleGroup, renderSummaryBadge(card));
+  const completion = element("span", {
+    className: `activity-status ${activity?.status === "attention" ? "attention" : "complete"}`,
+    text: activity?.status === "attention" ? "Needs attention" : "Complete",
+  });
+  header.append(icon, titleGroup, completion, renderSummaryBadge(card));
 
-  const body = element("div", { className: "review-summary" });
-  currentPayloadContainer = body;
+  const activityBody = element("div", { className: "activity-body" });
+  if (events.length === 0) {
+    activityBody.append(element("div", {
+      className: "activity-empty",
+      text: "Changes are ready. This workspace did not send milestone updates for this turn.",
+    }));
+  } else {
+    const timeline = element("ol", { className: "activity-timeline" });
+    timeline.setAttribute("aria-label", "Workspace activity");
+    events.forEach((event) => timeline.append(renderActivityEvent(event)));
+    activityBody.append(timeline);
+  }
+
+  if (visibleFiles.length > 0) {
+    const changedFiles = element("div", { className: "activity-files" });
+    changedFiles.append(element("div", { className: "activity-files-title", text: "Changed files" }));
+    const list = element("ul", { className: "activity-file-list" });
+    visibleFiles.forEach((file) => list.append(renderActivityFile(file)));
+    changedFiles.append(list);
+    activityBody.append(changedFiles);
+  }
 
   const actions = element("div", { className: "review-actions" });
+  if (card.payload?.patch || files.length > 0) {
+    const details = element("button", {
+      className: "review-action detail-toggle",
+      type: "button",
+      text: reviewDetailsExpanded ? "Hide raw diff" : "View raw diff",
+      ariaExpanded: String(reviewDetailsExpanded),
+    });
+    details.addEventListener("click", () => {
+      reviewDetailsExpanded = !reviewDetailsExpanded;
+      render();
+    });
+    actions.append(details);
+  }
   if (hiddenCount > 0) {
     const showMore = element("button", {
       className: "review-action",
@@ -423,7 +469,12 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
     actions.append(showMore);
   }
 
-  section.append(header, body);
+  section.append(header, activityBody);
+  if (reviewDetailsExpanded) {
+    const details = element("div", { className: "review-summary raw-diff-details" });
+    currentPayloadContainer = details;
+    section.append(details);
+  }
   if (actions.childElementCount > 0) {
     section.append(actions);
   }
@@ -431,6 +482,60 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
   main.append(section);
   appRoot.replaceChildren(main);
   renderPayloadIfNeeded();
+}
+
+function renderActivityEvent(
+  event: NonNullable<NonNullable<ToolResultCard["activity"]>["events"]>[number],
+): HTMLElement {
+  const item = element("li", { className: `activity-event ${event.kind ?? "inspect"} ${event.status ?? "success"}` });
+  const marker = element("span", { className: "activity-marker", ariaHidden: "true" });
+  marker.innerHTML = activityIcon(event.kind ?? "inspect", event.status ?? "success");
+  const content = element("div", { className: "activity-event-content" });
+  content.append(element("div", { className: "activity-event-title", text: event.title ?? "Workspace update" }));
+  const meta = element("div", { className: "activity-event-meta" });
+  if (event.path) meta.append(element("span", { className: "activity-event-path", text: event.path, title: event.path }));
+  if (typeof event.additions === "number" || typeof event.removals === "number") {
+    const stats = element("span", { className: "activity-event-stats" });
+    stats.append(
+      element("span", { className: "add", text: `+${String(event.additions ?? 0)}` }),
+      element("span", { className: "remove", text: `-${String(event.removals ?? 0)}` }),
+    );
+    meta.append(stats);
+  }
+  if (typeof event.durationMs === "number" && event.durationMs >= 250) {
+    meta.append(element("span", { className: "activity-event-duration", text: formatDuration(event.durationMs) }));
+  }
+  if (meta.childElementCount > 0) content.append(meta);
+  item.append(marker, content);
+  return item;
+}
+
+function renderActivityFile(file: NonNullable<ToolResultCard["files"]>[number]): HTMLElement {
+  const item = element("li", { className: "activity-file" });
+  const path = file.previousPath ? `${file.previousPath} → ${file.path ?? "renamed file"}` : file.path ?? "Unnamed file";
+  item.append(element("span", { className: "activity-file-path", text: path, title: path }));
+  const stats = element("span", { className: "activity-file-stats" });
+  stats.append(
+    element("span", { className: "add", text: `+${String(file.additions ?? 0)}` }),
+    element("span", { className: "remove", text: `-${String(file.removals ?? 0)}` }),
+  );
+  item.append(stats);
+  return item;
+}
+
+function formatDuration(durationMs: number): string {
+  return durationMs >= 1_000 ? `${(durationMs / 1_000).toFixed(durationMs >= 10_000 ? 0 : 1)}s` : `${durationMs}ms`;
+}
+
+function activityIcon(kind: string, status: string): string {
+  if (status === "failure" || status === "blocked") {
+    return iconSvg('<path d="M12 8v4m0 4h.01M10.3 3.9 2.8 17a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />');
+  }
+  if (kind === "change") return iconSvg('<path d="M4 20h4l10.5-10.5a2.8 2.8 0 0 0-4-4L4 16v4Z" /><path d="m13.5 6.5 4 4" />');
+  if (kind === "validate") return iconSvg('<path d="m5 12 4 4L19 6" />');
+  if (kind === "narration") return iconSvg('<path d="M4 5h16v11H8l-4 3V5Z" />');
+  if (kind === "workspace") return iconSvg('<path d="M4 5h16v14H4z" /><path d="M8 3v4m8-4v4M7 11h10M7 15h6" />');
+  return iconSvg('<path d="m10.5 10.5 3 3m0-3-3 3M5 4h10l4 4v12H5z" />');
 }
 
 function renderChevron(isExpanded: boolean, visible: boolean): HTMLElement {
