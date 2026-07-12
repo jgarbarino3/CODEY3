@@ -93,3 +93,26 @@
   macOS dependency scan is not misreported as a failed typecheck.
 - Focused dashboard test, full typecheck, and preview bundle build pass. CODEY 2
   and its live service remain untouched.
+
+## Preview startup repair
+
+- Post-reboot reproduction proved CODEY 3 could spend minutes evaluating the
+  public `@earendil-works/pi-coding-agent` barrel before binding port 7679; the
+  trace reached unrelated interactive UI modules such as individual
+  `highlight.js` languages.
+- Root cause: the earlier preview compilation left every dependency external,
+  so runtime startup evaluated Pi's full public barrel even though CODEY 3 only
+  needs its local coding tools, skill loader, and project-context discovery.
+- CODEY 3 Preview now aliases that barrel to a narrow adapter and bundles its
+  JavaScript dependency graph, leaving only native `better-sqlite3` external.
+  The adapter preserves Pi's coding-tool factories and skill loading while
+  implementing the same bounded AGENTS/CLAUDE ancestor discovery without Pi's
+  interactive resource-loader UI imports.
+- A deterministic startup smoke test now fails if the preview does not listen
+  within ten seconds. The repaired preview started in 203ms on the verification
+  run; the original bundle failed the five-second repro.
+- Full test suite, full typecheck, preview build, local health, local OAuth
+  challenge, public health, and public OAuth challenge pass.
+- The current temporary connector URL is
+  `https://compatible-obtaining-repair-doubt.trycloudflare.com/mcp`.
+- CODEY 2 remained untouched.
