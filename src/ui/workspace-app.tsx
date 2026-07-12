@@ -54,6 +54,8 @@ let reviewDetailsExpanded = false;
 let errorMessage: string | null = null;
 let currentPayload: MountedPayload | null = null;
 let currentPayloadContainer: HTMLElement | null = null;
+let dashboardPollTimer: number | null = null;
+let dashboardPollFailures = 0;
 
 const maybeAppRoot = document.querySelector<HTMLElement>("#app");
 
@@ -106,9 +108,11 @@ async function boot(): Promise<void> {
     };
     applyHostContext();
     renderPayloadIfNeeded();
+    syncDashboardPolling();
   };
 
   app.onteardown = async () => {
+    stopDashboardPolling();
     unmountPayload();
     return {};
   };
@@ -443,6 +447,28 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
   }
 
   const actions = element("div", { className: "review-actions" });
+  const fullscreenSupported = hostContext?.availableDisplayModes?.includes("fullscreen") ?? true;
+  if (fullscreenSupported) {
+    const expand = element("button", {
+      className: "review-action primary",
+      type: "button",
+      text: hostContext?.displayMode === "fullscreen" ? "Exit fullscreen" : "Open workspace",
+    });
+    expand.addEventListener("click", async () => {
+      if (!app) return;
+      const mode = hostContext?.displayMode === "fullscreen" ? "inline" : "fullscreen";
+      try {
+        const result = await app.requestDisplayMode({ mode });
+        hostContext = { ...hostContext, displayMode: result.mode };
+        render();
+        syncDashboardPolling();
+      } catch (requestError) {
+        errorMessage = requestError instanceof Error ? requestError.message : String(requestError);
+        render();
+      }
+    });
+    actions.append(expand);
+  }
   if (card.payload?.patch || files.length > 0) {
     const details = element("button", {
       className: "review-action detail-toggle",
@@ -470,6 +496,10 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
   }
 
   section.append(header, activityBody);
+  if (hostContext?.displayMode === "fullscreen") {
+    section.classList.add("fullscreen-workspace");
+    activityBody.prepend(renderDashboard(card));
+  }
   if (reviewDetailsExpanded) {
     const details = element("div", { className: "review-summary raw-diff-details" });
     currentPayloadContainer = details;
@@ -482,7 +512,108 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
   main.append(section);
   appRoot.replaceChildren(main);
   renderPayloadIfNeeded();
+  syncDashboardPolling();
 }
+
+function renderDashboard(card: ToolResultCard): HTMLElement {
+  const dashboard = card.dashboard;
+  const workspace = element("div", { className: "codey-dashboard" });
+  const topbar = element("div", { className: "codey-dashboard-topbar" });
+  const identity = element("div", { className: "codey-dashboard-identity" });
+  identity.append(
+    element("strong", { text: dashboard?.currentTask?.title ?? "CODEY workspace" }),
+    element("span", {
+      text: [dashboard?.repository?.name, dashboard?.repository?.branch].filter(Boolean).join(" · ") || "Connected workspace",
+    }),
+  );
+  const freshness = element("span", {
+    className: `dashboard-freshness ${dashboardPollFailures > 0 ? "stale" : "live"}`,
+    text: dashboardPollFailures > 0 ? "Reconnecting" : "Live",
+  });
+  topbar.append(identity, freshness);
+
+  const grid = element("div", { className: "codey-dashboard-grid" });
+  const tree = element("aside", { className: "codey-tree" });
+  tree.append(element("div", { className: "dashboard-section-title", text: "Workspace" }));
+  const treeList = element("div", { className: "codey-tree-list", text: "Loading repository metadata…" });
+  tree.append(treeList);
+  void loadWorkspaceTree(card.workspaceId, treeList);
+
+  const recent = element("aside", { className: "codey-recent" });
+  recent.append(element("div", { className: "dashboard-section-title", text: "Recent tasks" }));
+  const recentList = element("ol", { className: "codey-recent-list" });
+  const tasks = dashboard?.recentTasks ?? [];
+  if (tasks.length === 0) {
+    recentList.append(element("li", { className: "muted", text: "No prior task summaries" }));
+  } else {
+    tasks.forEach((task) => {
+      const row = element("li", { className: `recent-task ${task.status ?? "working"}` });
+      row.append(element("span", { text: task.title ?? "Untitled task" }), element("small", { text: task.status ?? "working" }));
+      recentList.append(row);
+    });
+  }
+  recent.append(recentList);
+  grid.append(tree, recent);
+  workspace.append(topbar, grid);
+  return workspace;
+}
+
+async function loadWorkspaceTree(workspaceId: string | undefined, container: HTMLElement): Promise<void> {
+  if (!app || !workspaceId || container.dataset.loaded === "true") return;
+  container.dataset.loaded = "true";
+  try {
+    const result = await app.callServerTool({ name: "list_workspace_entries", arguments: { workspaceId } });
+    const structured = getStructuredContent<{ listing?: { entries?: Array<{ name?: string; type?: string; changed?: boolean }> } }>(result);
+    const entries = structured?.listing?.entries ?? [];
+    container.replaceChildren(...entries.slice(0, 40).map((entry) => {
+      const row = element("div", { className: `codey-tree-row ${entry.changed ? "changed" : ""}` });
+      row.append(
+        element("span", { className: "tree-kind", text: entry.type === "directory" ? "⌄" : "·", ariaHidden: "true" }),
+        element("span", { text: entry.name ?? "Unnamed" }),
+        entry.changed ? element("span", { className: "tree-change", text: "M" }) : element("span"),
+      );
+      return row;
+    }));
+  } catch {
+    container.textContent = "Repository metadata unavailable";
+  }
+}
+
+function syncDashboardPolling(): void {
+  const shouldPoll = hostContext?.displayMode === "fullscreen" && document.visibilityState === "visible" && Boolean(card?.workspaceId);
+  if (!shouldPoll) {
+    stopDashboardPolling();
+    return;
+  }
+  if (dashboardPollTimer !== null) return;
+  dashboardPollTimer = window.setTimeout(() => void pollDashboard(), 5_000);
+}
+
+async function pollDashboard(): Promise<void> {
+  dashboardPollTimer = null;
+  if (!app || !card?.workspaceId || hostContext?.displayMode !== "fullscreen" || document.visibilityState !== "visible") return;
+  try {
+    const result = await app.callServerTool({
+      name: "get_workspace_dashboard",
+      arguments: { workspaceId: card.workspaceId, cursor: card.dashboard?.cursor },
+    });
+    const structured = getStructuredContent<{ dashboard?: ToolResultCard["dashboard"] }>(result);
+    if (structured?.dashboard && !structured.dashboard.unchanged) card = { ...card, dashboard: structured.dashboard };
+    dashboardPollFailures = 0;
+    render();
+  } catch {
+    dashboardPollFailures += 1;
+  }
+  const delay = Math.min(30_000, 5_000 * 2 ** Math.min(dashboardPollFailures, 3));
+  dashboardPollTimer = window.setTimeout(() => void pollDashboard(), delay);
+}
+
+function stopDashboardPolling(): void {
+  if (dashboardPollTimer !== null) window.clearTimeout(dashboardPollTimer);
+  dashboardPollTimer = null;
+}
+
+document.addEventListener("visibilitychange", syncDashboardPolling);
 
 function renderActivityEvent(
   event: NonNullable<NonNullable<ToolResultCard["activity"]>["events"]>[number],

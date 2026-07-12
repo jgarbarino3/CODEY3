@@ -14,6 +14,37 @@ export type ToolName =
   | "ls"
   | "bash";
 
+export interface CodeyTaskCard {
+  id?: string;
+  title?: string;
+  status?: "working" | "complete" | "attention" | "interrupted";
+  summary?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  version?: number;
+  events?: Array<{
+    id?: string;
+    kind?: "workspace" | "inspect" | "change" | "validate" | "narration";
+    status?: "success" | "failure" | "working" | "blocked" | "complete";
+    title?: string;
+    path?: string;
+    additions?: number;
+    removals?: number;
+    durationMs?: number;
+    createdAt?: string;
+  }>;
+}
+
+export interface CodeyDashboardCard {
+  workspaceId?: string;
+  cursor?: string;
+  unchanged?: boolean;
+  repository?: { name?: string; branch?: string; dirty?: boolean };
+  currentTask?: CodeyTaskCard;
+  recentTasks?: CodeyTaskCard[];
+  files?: Array<{ path?: string; additions?: number; removals?: number }>;
+}
+
 export type HostContext = NonNullable<ReturnType<App["getHostContext"]>>;
 
 export type PatchOperation = "add" | "update" | "delete" | "move";
@@ -39,6 +70,7 @@ export interface ToolResultCard {
       createdAt?: string;
     }>;
   };
+  dashboard?: CodeyDashboardCard;
   files?: Array<{
     path?: string;
     previousPath?: string;

@@ -1,3 +1,32 @@
+# CODEY 3
+
+CODEY 3 is Joe Garbarino's personal fullscreen ChatGPT coding workspace. One
+ChatGPT conversation uses secure local MCP tools while a Codex-inspired activity
+workspace shows what is happening.
+
+It was seeded from the known-working CODEY 2 commit
+`4b7e2a8a61d360cf6ec007b6c6c2a7cf240f7df1`. CODEY 2 remains a separate,
+untouched fallback product.
+
+## Isolated preview
+
+```bash
+npm run codey3:preview:init
+npm run codey3:preview
+```
+
+The preview binds port `7679` and uses `.codey3-preview/` for configuration,
+OAuth credentials, SQLite state, and managed worktrees. Connect it to ChatGPT as
+a separate **CODEY 3 Preview** connector through a temporary HTTPS tunnel.
+
+- ChatGPT is the sole V1 coding agent through MCP.
+- Preview scripts disable local subagents.
+- Fullscreen opens explicitly from the compact `show_changes` card.
+- Repository browsing is metadata-only; raw code stays behind changed-file diff disclosure.
+- Verification controls run only fixed repository checks.
+
+## DevSpace heritage
+
 <p align="center">
   <picture>
     <img src="https://raw.githubusercontent.com/Waishnav/devspace/main/docs/assets/devspace-logo-light.png" alt="DevSpace logo" width="140">

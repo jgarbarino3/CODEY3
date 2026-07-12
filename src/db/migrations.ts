@@ -22,6 +22,11 @@ const migrations: Migration[] = [
     name: "local-agent-sessions",
     up: migrateLocalAgentSessions,
   },
+  {
+    version: 4,
+    name: "codey-tasks",
+    up: migrateCodeyTasks,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -53,6 +58,57 @@ export function migrateDatabase(sqlite: Database.Database): void {
   });
 
   migrate.immediate();
+}
+
+function migrateCodeyTasks(sqlite: Database.Database): void {
+  sqlite.exec(`
+    create table if not exists codey_tasks (
+      id text primary key,
+      workspace_id text not null,
+      title text not null,
+      status text not null,
+      summary text,
+      started_at text not null,
+      finished_at text,
+      version integer not null default 1
+    );
+
+    create index if not exists codey_tasks_workspace_idx
+      on codey_tasks(workspace_id, started_at desc);
+
+    create table if not exists codey_task_events (
+      id integer primary key autoincrement,
+      task_id text not null,
+      kind text not null,
+      status text not null,
+      title text not null,
+      path text,
+      additions integer,
+      removals integer,
+      duration_ms integer,
+      created_at text not null,
+      foreign key (task_id) references codey_tasks(id) on delete cascade
+    );
+
+    create index if not exists codey_task_events_task_idx
+      on codey_task_events(task_id, id);
+
+    create table if not exists codey_verification_runs (
+      id text primary key,
+      workspace_id text not null,
+      task_id text,
+      check_id text not null,
+      label text not null,
+      status text not null,
+      duration_ms integer,
+      exit_code integer,
+      started_at text not null,
+      finished_at text
+    );
+
+    create index if not exists codey_verification_workspace_idx
+      on codey_verification_runs(workspace_id, started_at desc);
+  `);
 }
 
 function migrateWorkspaceState(sqlite: Database.Database): void {

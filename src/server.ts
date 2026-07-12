@@ -44,6 +44,13 @@ import {
 } from "./workspace-activity.js";
 import { formatPathForPrompt } from "./skills.js";
 import { createWorkspaceStore } from "./workspace-store.js";
+import { CodeyTaskStore } from "./codey-tasks.js";
+import {
+  getDashboard,
+  listWorkspaceEntries,
+  runVerification,
+  verificationChecks,
+} from "./codey-dashboard.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import { summarizeLocalAgentProfile } from "./local-agent-profiles.js";
 import {
@@ -178,11 +185,12 @@ interface ToolLogFields {
 }
 
 const workspaceActivitiesByConfig = new WeakMap<ServerConfig, WorkspaceActivityManager>();
+const codeyTasksByConfig = new WeakMap<ServerConfig, CodeyTaskStore>();
 
 function serverInstructions(config: ServerConfig): string {
   const showChangesInstruction =
     config.widgets === "changes"
-      ? " If the turn successfully modifies files by creating, editing, overwriting, deleting, moving, or applying patches, call show_changes exactly once for that workspace after the final related file change and before your final response so the user can inspect one aggregate activity card. Do not call it after every individual file change. Use report_progress only for concise, user-facing milestones (for example, what changed, a blocked check, or a successful verification). Never use it to expose private reasoning, raw commands, tokens, or secrets."
+      ? " For meaningful work, call start_task once with a concise user-facing title before the first workspace action. Use report_progress only for meaningful milestones. Before the final response, call finish_task with the honest outcome, then call show_changes exactly once after the final related file change so the user can inspect one aggregate activity card and optionally expand the CODEY 3 workspace. Never expose private reasoning, raw commands, tokens, credentials, or secrets."
       : "";
 
   if (config.toolMode === "codex") {
@@ -304,6 +312,7 @@ function requestLogFields(req: Request, config: ServerConfig): Record<string, un
 
 function logToolCall(config: ServerConfig, fields: ToolLogFields): void {
   workspaceActivitiesByConfig.get(config)?.recordToolCall(fields);
+  if (fields.workspaceId) codeyTasksByConfig.get(config)?.record(fields.workspaceId, fields);
   if (!config.logging.toolCalls) return;
 
   const { command, ...safeFields } = fields;
@@ -698,11 +707,12 @@ function createMcpServer(
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
   processSessions: ProcessSessionManager,
   localAgentProviders: LocalAgentProviderAvailability[],
+  codeyTasks: CodeyTaskStore,
 ): McpServer {
   const server = new McpServer(
     {
-      name: "devspace",
-      title: "DevSpace",
+      name: "codey3",
+      title: "CODEY 3",
       version: "0.1.0",
       description:
         "Secure local coding workspace for MCP clients. Provides workspace-scoped file, search, edit, write, and shell tools.",
@@ -1247,6 +1257,161 @@ function createMcpServer(
   }
 
   if (config.widgets === "changes") {
+    const runningChecks = new Set<string>();
+
+    registerAppTool(
+      server,
+      "start_task",
+      {
+        title: "Start task",
+        description: "Start one concise, user-visible CODEY task for this workspace. Call once before meaningful work.",
+        inputSchema: {
+          workspaceId: z.string(),
+          title: z.string().min(1).max(120),
+        },
+        outputSchema: { task: z.unknown() },
+        _meta: {},
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      },
+      async ({ workspaceId, title }) => {
+        workspaces.getWorkspace(workspaceId);
+        const task = codeyTasks.start(workspaceId, title);
+        return {
+          content: [textBlock(`Started CODEY task ${task.id}: ${task.title}`)],
+          structuredContent: { task },
+        };
+      },
+    );
+
+    registerAppTool(
+      server,
+      "finish_task",
+      {
+        title: "Finish task",
+        description: "Finish the active CODEY task with a concise outcome. File and verification facts remain server-owned.",
+        inputSchema: {
+          workspaceId: z.string(),
+          outcome: z.enum(["complete", "attention"]),
+          summary: z.string().min(1).max(240).optional(),
+        },
+        outputSchema: { task: z.unknown() },
+        _meta: {},
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      },
+      async ({ workspaceId, outcome, summary }) => {
+        workspaces.getWorkspace(workspaceId);
+        const task = codeyTasks.finish(workspaceId, outcome, summary);
+        return {
+          content: [textBlock(`Finished CODEY task ${task.id} with status ${task.status}.`)],
+          structuredContent: { task },
+        };
+      },
+    );
+
+    registerAppTool(
+      server,
+      "get_workspace_dashboard",
+      {
+        title: "Refresh CODEY workspace",
+        description: "Read the current CODEY task, recent task summaries, Git state, and changed-file deltas.",
+        inputSchema: {
+          workspaceId: z.string(),
+          taskId: z.string().optional(),
+          cursor: z.string().optional(),
+        },
+        outputSchema: { dashboard: z.unknown() },
+        _meta: { ui: { visibility: ["model", "app"] } },
+        annotations: { readOnlyHint: true },
+      },
+      async ({ workspaceId, taskId, cursor }) => {
+        const workspace = workspaces.getWorkspace(workspaceId);
+        const dashboard = await getDashboard({ workspaceId, root: workspace.root, taskStore: codeyTasks, taskId, cursor });
+        return {
+          content: [textBlock(dashboard.unchanged ? "CODEY dashboard is unchanged." : "CODEY dashboard refreshed.")],
+          structuredContent: { dashboard },
+        };
+      },
+    );
+
+    registerAppTool(
+      server,
+      "list_workspace_entries",
+      {
+        title: "Browse workspace metadata",
+        description: "List bounded file and directory metadata without reading file contents.",
+        inputSchema: {
+          workspaceId: z.string(),
+          path: z.string().optional(),
+          cursor: z.number().int().nonnegative().optional(),
+        },
+        outputSchema: { listing: z.unknown() },
+        _meta: { ui: { visibility: ["model", "app"] } },
+        annotations: { readOnlyHint: true },
+      },
+      async ({ workspaceId, path, cursor }) => {
+        const workspace = workspaces.getWorkspace(workspaceId);
+        const listing = await listWorkspaceEntries({ root: workspace.root, path, cursor });
+        return {
+          content: [textBlock(`Listed ${listing.entries.length} workspace entries.`)],
+          structuredContent: { listing },
+        };
+      },
+    );
+
+    registerAppTool(
+      server,
+      "list_verification_checks",
+      {
+        title: "List verification checks",
+        description: "List fixed repository verification checks available to CODEY.",
+        inputSchema: { workspaceId: z.string() },
+        outputSchema: { checks: z.array(z.unknown()) },
+        _meta: { ui: { visibility: ["model", "app"] } },
+        annotations: { readOnlyHint: true },
+      },
+      async ({ workspaceId }) => {
+        workspaces.getWorkspace(workspaceId);
+        const checks = verificationChecks();
+        return { content: [textBlock(`Available checks: ${checks.map((check) => check.label).join(", ")}`)], structuredContent: { checks } };
+      },
+    );
+
+    registerAppTool(
+      server,
+      "run_verification_check",
+      {
+        title: "Run verification check",
+        description: "Run one fixed, allowlisted repository check. Arbitrary commands are not accepted.",
+        inputSchema: { workspaceId: z.string(), checkId: z.enum(["test", "typecheck", "build"]) },
+        outputSchema: { verification: z.unknown() },
+        _meta: { ui: { visibility: ["model", "app"] } },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ workspaceId, checkId }) => {
+        const workspace = workspaces.getWorkspace(workspaceId);
+        const key = `${workspaceId}:${checkId}`;
+        if (runningChecks.has(key)) throw new Error(`${checkId} is already running for this workspace.`);
+        runningChecks.add(key);
+        try {
+          const verification = await runVerification({ root: workspace.root, checkId });
+          logToolCall(config, {
+            tool: "verification",
+            workspaceId,
+            command: `verification:${checkId}`,
+            success: verification.status === "passed",
+            durationMs: verification.durationMs,
+          });
+          return {
+            content: [textBlock(`${verification.label} ${verification.status}.`)],
+            structuredContent: { verification },
+            isError: verification.status === "failed",
+          };
+        } finally {
+          runningChecks.delete(key);
+        }
+      },
+    );
+
     registerAppTool(
       server,
       "report_progress",
@@ -1302,6 +1467,7 @@ function createMcpServer(
           workspaceId,
           acknowledge: true,
         });
+        const dashboard = await getDashboard({ workspaceId, root: workspace.root, taskStore: codeyTasks });
 
         const content = [textBlock(review.result)];
         logToolCall(config, {
@@ -1320,6 +1486,7 @@ function createMcpServer(
               summary: review.summary,
               files: review.files,
               activity,
+              dashboard,
               payload: {
                 patch: review.patch,
               },
@@ -1665,6 +1832,8 @@ export function createServer(config = loadConfig()): RunningServer {
   const reviewCheckpoints = createReviewCheckpointManager();
   const workspaceActivities = createWorkspaceActivityManager();
   workspaceActivitiesByConfig.set(config, workspaceActivities);
+  const codeyTasks = new CodeyTaskStore(config.stateDir);
+  codeyTasksByConfig.set(config, codeyTasks);
   const processSessions = new ProcessSessionManager();
   const localAgentProviders = config.subagents
     ? getLocalAgentProviderAvailabilitySnapshot()
@@ -1724,7 +1893,7 @@ export function createServer(config = loadConfig()): RunningServer {
   );
 
   app.get("/healthz", (_req, res) => {
-    res.json({ ok: true, name: "devspace" });
+    res.json({ ok: true, name: "codey3" });
   });
 
   app.all("/mcp", async (req, res) => {
@@ -1798,6 +1967,7 @@ export function createServer(config = loadConfig()): RunningServer {
           reviewCheckpoints,
           processSessions,
           localAgentProviders,
+          codeyTasks,
         );
         await server.connect(transport);
       } else {
@@ -1828,7 +1998,9 @@ export function createServer(config = loadConfig()): RunningServer {
       processSessions.shutdown();
       oauthProvider.close();
       workspaceStore.close?.();
+      codeyTasks.close();
       workspaceActivitiesByConfig.delete(config);
+      codeyTasksByConfig.delete(config);
     },
   };
 }

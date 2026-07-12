@@ -1,0 +1,61 @@
+# CODEY 3 Fullscreen Agent Workspace Evidence
+
+## Baseline
+
+- Source repository: `/Users/joegarbarino/Documents/CODEY`
+- Source commit: `4b7e2a8a61d360cf6ec007b6c6c2a7cf240f7df1`
+- CODEY 3 repository: `https://github.com/jgarbarino3/CODEY3`
+- `npm ci`: passed with zero reported vulnerabilities.
+- Inherited `npm test`: produced no failure output.
+- Inherited `npm run typecheck`: produced no failure output.
+- Inherited `npm run build`: passed with the existing large-chunk advisory.
+
+## Isolation
+
+- CODEY 3 has only `https://github.com/jgarbarino3/CODEY3.git` as its Git remote.
+- CODEY 2 repository, service, credentials, connector, global installation, and tunnel were not modified.
+
+## Implementation
+
+- Added persisted CODEY task and event tables with workspace isolation,
+  interruption handling, bounded retention, and redacted summaries.
+- Added `start_task`, `finish_task`, `get_workspace_dashboard`,
+  `list_workspace_entries`, `list_verification_checks`, and
+  `run_verification_check` MCP tools.
+- Added explicit Apps SDK fullscreen entry, activity-first CODEY workspace,
+  metadata-only repository listing, recent-task summaries, and five-second
+  visibility-aware polling with backoff.
+- Renamed the package to `@jgarbarino3/codey3`; preview scripts use port 7679,
+  `.codey3-preview/`, and force subagents off.
+
+## Verification after implementation
+
+- Focused `codey-tasks.test.ts` and `codey-dashboard.test.ts`: passed.
+- `npm run typecheck`: passed after removing one recursive UI type discovered
+  during the first run.
+- Vite production app build: passed with the inherited large-chunk advisory.
+- Full suite progressed through the new tests and existing local-agent tests;
+  one package-rename regression in PATH isolation was found and fixed. The
+  rerun later stalled in the inherited `skills.test.ts`, including after the
+  Git repair below, so the full suite is not recorded as green.
+- Server TypeScript emit stalled after the app build and was stopped; the full
+  production build remains incomplete even though no TypeScript diagnostic was
+  emitted.
+
+## Preview evidence
+
+- Preview config and fresh OAuth owner credential exist under ignored
+  `.codey3-preview/` with mode `0600`.
+- Allowed root is exactly `/Users/joegarbarino/Documents/CODEY3`; subagents are
+  disabled; port is 7679.
+- Temporary tunnel was created at
+  `https://statutes-soldier-serious-columns.trycloudflare.com`.
+- The initial local clone contained one truncated Git pack. The corrupt pack,
+  index, and reverse index were moved to macOS Trash, the object database was
+  refetched from GitHub, and `git fsck --full` then passed.
+- Node 24 nevertheless continued to stall while importing the server graph;
+  one attempt reported an invalid SDK package manifest despite that manifest
+  parsing as valid. The preview did not bind port 7679, so endpoint, connector,
+  fullscreen, polling, responsive, and screenshot evidence remain
+  **implemented but unproven**.
+- CODEY 2 remained untouched throughout.
