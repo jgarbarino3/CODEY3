@@ -53,9 +53,17 @@
 - The initial local clone contained one truncated Git pack. The corrupt pack,
   index, and reverse index were moved to macOS Trash, the object database was
   refetched from GitHub, and `git fsck --full` then passed.
-- Node 24 nevertheless continued to stall while importing the server graph;
-  one attempt reported an invalid SDK package manifest despite that manifest
-  parsing as valid. The preview did not bind port 7679, so endpoint, connector,
-  fullscreen, polling, responsive, and screenshot evidence remain
-  **implemented but unproven**.
+- The startup block was minimized to the `tsx` loader importing inherited
+  `process-sessions.ts`; direct esbuild compilation of that module completed in
+  milliseconds. The preview now compiles a small ignored server bundle with
+  esbuild before launching Node, bypassing the blocked source-loader path.
+- Local `/healthz` returns `{"ok":true,"name":"codey3"}` and local `/mcp`
+  returns the expected OAuth-protected `401` challenge.
+- Public `/healthz` is healthy and public `/mcp` returns the expected protected
+  `401` through
+  `https://establishment-judicial-lets-containers.trycloudflare.com/mcp`.
+- The server and temporary tunnel are running for ChatGPT connector testing.
+  Connector, fullscreen, polling, responsive, and screenshot evidence remain
+  **implemented but unproven** until Joe completes the ChatGPT OAuth flow and
+  exercises a real task.
 - CODEY 2 remained untouched throughout.
