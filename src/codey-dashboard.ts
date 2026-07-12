@@ -120,6 +120,8 @@ export function verificationChecks(): VerificationCheck[] {
   ];
 }
 
+export const DEFAULT_VERIFICATION_TIMEOUT_MS = 300_000;
+
 export async function runVerification(input: {
   root: string;
   checkId: string;
@@ -131,7 +133,7 @@ export async function runVerification(input: {
   try {
     await execFileAsync("npm", ["run", check.script], {
       cwd: input.root,
-      timeout: input.timeoutMs ?? 120_000,
+      timeout: input.timeoutMs ?? DEFAULT_VERIFICATION_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
     });
     return { checkId: check.id, label: check.label, status: "passed", durationMs: Math.round(performance.now() - started), exitCode: 0 };

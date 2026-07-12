@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { listWorkspaceEntries, verificationChecks } from "./codey-dashboard.js";
+import { DEFAULT_VERIFICATION_TIMEOUT_MS, listWorkspaceEntries, verificationChecks } from "./codey-dashboard.js";
 
 const root = mkdtempSync(join(tmpdir(), "codey3-dashboard-"));
 execFileSync("git", ["init"], { cwd: root });
@@ -22,3 +22,4 @@ assert.equal("content" in listing.entries[0]!, false);
 
 await assert.rejects(() => listWorkspaceEntries({ root, path: "../" }), /relative/);
 assert.deepEqual(verificationChecks().map((check) => check.id), ["test", "typecheck", "build"]);
+assert.equal(DEFAULT_VERIFICATION_TIMEOUT_MS, 300_000);

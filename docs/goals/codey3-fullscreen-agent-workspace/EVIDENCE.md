@@ -80,3 +80,16 @@
 - Focused regression test, typecheck, preview bundle build, public health, and
   public OAuth challenge all pass after the repair.
 - CODEY 2 remained untouched throughout.
+
+## Cold typecheck timeout repair
+
+- A subsequent ChatGPT task reported that the fixed `typecheck` verification
+  exceeded the dashboard's 120-second ceiling and a direct retry appeared idle.
+- Process sampling showed TypeScript blocked in filesystem reads across ordinary
+  dependency declaration files rather than producing compiler diagnostics.
+- The unchanged TypeScript 6 check subsequently passed twice after the cold
+  dependency scan completed; the verified run finished inside 30 seconds.
+- Fixed repository verification checks now allow up to five minutes so a cold
+  macOS dependency scan is not misreported as a failed typecheck.
+- Focused dashboard test, full typecheck, and preview bundle build pass. CODEY 2
+  and its live service remain untouched.
