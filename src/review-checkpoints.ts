@@ -62,10 +62,10 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
           return;
         }
 
-        state.gitRoot = eligibility.gitRoot;
         const commit = await createWorkingTreeSnapshot(eligibility.gitRoot);
         await git(eligibility.gitRoot, ["update-ref", state.openRef, commit]);
         await git(eligibility.gitRoot, ["update-ref", state.baselineRef, commit]);
+        state.gitRoot = eligibility.gitRoot;
       } catch (error) {
         state.diagnostic = error instanceof Error ? error.message : String(error);
       }
@@ -83,7 +83,7 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
       }
 
       const baselineRef = since === "workspace_open" ? state.openRef : state.baselineRef;
-      const baseline = (await git(state.gitRoot, ["rev-parse", "--verify", `${baselineRef}^{commit}`])).stdout.trim();
+      const baseline = await resolveBaseline(state.gitRoot, baselineRef);
       const current = await createWorkingTreeSnapshot(state.gitRoot);
       const patch = (await git(state.gitRoot, ["diff", "--binary", "--no-color", baseline, current], {
         maxBuffer: 50 * 1024 * 1024,
@@ -109,6 +109,14 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
       };
     },
   };
+}
+
+async function resolveBaseline(gitRoot: string, baselineRef: string): Promise<string> {
+  try {
+    return (await git(gitRoot, ["rev-parse", "--verify", `${baselineRef}^{commit}`])).stdout.trim();
+  } catch {
+    return (await git(gitRoot, ["rev-parse", "--verify", "HEAD^{commit}"])).stdout.trim();
+  }
 }
 
 function reviewRefs(workspaceId: string): Pick<WorkspaceReviewState, "openRef" | "baselineRef"> {

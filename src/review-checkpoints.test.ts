@@ -25,6 +25,11 @@ try {
   assert.equal(clean.patch, "");
   assert.match(clean.result, /No changes/);
 
+  await git(root, ["update-ref", "-d", "refs/devspace/review/ws_review/baseline"]);
+  const recovered = await manager.reviewChanges({ workspaceId: "ws_review", root });
+  assert.equal(recovered.summary.files, 0);
+  assert.match(recovered.result, /No changes/);
+
   await writeFile(join(root, "README.md"), "hello\nworld\n");
   await writeFile(join(root, "new.txt"), "new\n");
 

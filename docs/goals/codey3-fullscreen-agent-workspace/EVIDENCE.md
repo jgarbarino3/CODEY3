@@ -66,4 +66,17 @@
   Connector, fullscreen, polling, responsive, and screenshot evidence remain
   **implemented but unproven** until Joe completes the ChatGPT OAuth flow and
   exercises a real task.
+
+## First ChatGPT task repair
+
+- A real read-only ChatGPT task opened the workspace and passed the configured
+  typecheck, but `show_changes` failed with `fatal: Needed a single revision`.
+- The failure was reproduced deterministically by deleting the workspace review
+  baseline ref before calling `reviewChanges`.
+- Root cause: workspace open did not await asynchronous review initialization,
+  and the manager exposed `gitRoot` before both review refs existed.
+- `open_workspace` now awaits baseline creation; review also self-recovers a
+  missing ref by comparing against `HEAD`.
+- Focused regression test, typecheck, preview bundle build, public health, and
+  public OAuth challenge all pass after the repair.
 - CODEY 2 remained untouched throughout.

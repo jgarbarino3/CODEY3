@@ -808,7 +808,7 @@ function createMcpServer(
       const { workspace, agentsFiles, availableAgentsFiles } = await workspaces.openWorkspace({ path, mode, baseRef });
       workspaceActivitiesByConfig.get(config)?.initializeWorkspace({ workspaceId: workspace.id });
       if (config.widgets === "changes") {
-        void reviewCheckpoints.initializeWorkspace({
+        await reviewCheckpoints.initializeWorkspace({
           workspaceId: workspace.id,
           root: workspace.root,
         });
