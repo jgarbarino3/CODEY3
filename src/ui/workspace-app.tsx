@@ -13,8 +13,6 @@ import {
   isReviewTool,
   isSearchTool,
   isShellTool,
-  isToolName,
-  isToolResultCard,
   isWriteTool,
   payloadText,
   summaryNumber,
@@ -24,6 +22,11 @@ import {
   type ToolResultCard,
 } from "./card-types.js";
 import { getPatchDisplayParts } from "./patch-display.js";
+import {
+  cardFromOpenAiGlobals,
+  cardFromToolResult,
+  type OpenAiToolGlobals,
+} from "./widget-result.js";
 import "./workspace-app.css";
 
 interface ToolDisplay {
@@ -75,32 +78,65 @@ async function boot(): Promise<void> {
     {},
   );
 
-  app.ontoolresult = (result) => {
-    const structuredContent = getStructuredContent<Partial<ToolResultCard>>(result);
-    const metaCard = cardFromMeta(result);
-    const structured = metaCard
-      ? { ...structuredContent, ...metaCard }
-      : structuredContent;
-    const tool = toolNameFromMeta(result);
+  app.ontoolresult = applyToolResult;
+  registerHostLifecycleHandlers();
+  window.addEventListener("openai:set_globals", handleOpenAiGlobals as EventListener);
 
-    if (!tool || !isToolResultCard(structured)) {
-      card = null;
-      expanded = false;
-      reviewFilesExpanded = false;
-      reviewDetailsExpanded = false;
-      errorMessage = "No result card is available for this tool result.";
-      render();
-      return;
-    }
+  try {
+    await app.connect();
+    const initialContext = app.getHostContext();
+    if (initialContext) hostContext = initialContext;
+    applyHostContext();
+    connected = true;
+    applyOpenAiGlobals(currentOpenAiGlobals());
+  } catch (connectError) {
+    connectionError = connectError instanceof Error
+      ? connectError.message
+      : String(connectError);
+  }
 
-    card = { ...structured, tool };
+  render();
+}
+
+function applyToolResult(result: CallToolResult): void {
+  const nextCard = cardFromToolResult(result);
+  if (!nextCard) {
+    card = null;
     expanded = false;
     reviewFilesExpanded = false;
     reviewDetailsExpanded = false;
-    errorMessage = null;
+    errorMessage = "No result card is available for this tool result.";
     render();
-  };
+    return;
+  }
 
+  applyCard(nextCard);
+}
+
+function applyOpenAiGlobals(globals: OpenAiToolGlobals | undefined): void {
+  const nextCard = cardFromOpenAiGlobals(globals);
+  if (nextCard) applyCard(nextCard);
+}
+
+function applyCard(nextCard: ToolResultCard): void {
+  card = nextCard;
+  expanded = false;
+  reviewFilesExpanded = false;
+  reviewDetailsExpanded = false;
+  errorMessage = null;
+  render();
+}
+
+function handleOpenAiGlobals(event: CustomEvent<{ globals?: OpenAiToolGlobals }>): void {
+  applyOpenAiGlobals(event.detail?.globals ?? currentOpenAiGlobals());
+}
+
+function currentOpenAiGlobals(): OpenAiToolGlobals | undefined {
+  return (window as unknown as { openai?: OpenAiToolGlobals }).openai;
+}
+
+function registerHostLifecycleHandlers(): void {
+  if (!app) return;
   app.onhostcontextchanged = (ctx) => {
     hostContext = {
       ...hostContext,
@@ -112,24 +148,11 @@ async function boot(): Promise<void> {
   };
 
   app.onteardown = async () => {
+    window.removeEventListener("openai:set_globals", handleOpenAiGlobals as EventListener);
     stopDashboardPolling();
     unmountPayload();
     return {};
   };
-
-  try {
-    await app.connect();
-    const initialContext = app.getHostContext();
-    if (initialContext) hostContext = initialContext;
-    applyHostContext();
-    connected = true;
-  } catch (connectError) {
-    connectionError = connectError instanceof Error
-      ? connectError.message
-      : String(connectError);
-  }
-
-  render();
 }
 
 function applyHostContext(): void {
@@ -793,18 +816,6 @@ function getToolLabel(card: ToolResultCard): string {
   }
 
   return card.tool;
-}
-
-function toolNameFromMeta(result: CallToolResult): ToolName | undefined {
-  const meta = result._meta as Record<string, unknown> | undefined;
-  const tool = meta?.tool;
-  return isToolName(tool) ? tool : undefined;
-}
-
-function cardFromMeta(result: CallToolResult): Partial<ToolResultCard> | undefined {
-  const meta = result._meta as Record<string, unknown> | undefined;
-  const metaCard = meta?.card;
-  return metaCard && typeof metaCard === "object" ? metaCard : undefined;
 }
 
 function getStructuredContent<T>(result: CallToolResult): T | undefined {

@@ -135,3 +135,20 @@
   HTTP/2. CODEY 2's existing ngrok endpoint remained online and was deliberately
   not reused or replaced. Public launcher recovery is **implemented but
   unproven** until the network permits a Cloudflare edge connection.
+
+## Initial widget-result hydration repair
+
+- A real ChatGPT `show_changes` call mounted the CODEY 3 iframe but left it at
+  `Waiting for a tool result.` even though the tool completed successfully.
+- The widget previously handled only later MCP Apps tool-result notifications.
+  It now also hydrates once from ChatGPT's initial `toolOutput` and canonical
+  `toolResponseMetadata`, and listens for later `openai:set_globals` updates.
+- Initial globals and live notifications share one card decoder; no duplicate
+  rendering or state-ownership path was introduced.
+- Focused regression coverage passes for both a zero-change review and a
+  changed-file review. Full tests, typecheck, production widget build, preview
+  bundle build, and diff hygiene pass.
+- Visibility-aware polling remains unchanged: it runs only while the widget is
+  fullscreen, visible, and attached to a workspace.
+- A refreshed ChatGPT render and fullscreen interaction remain **implemented
+  but unproven** until the connector exercises the repaired widget.
