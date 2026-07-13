@@ -152,3 +152,7 @@
   fullscreen, visible, and attached to a workspace.
 - A refreshed ChatGPT render and fullscreen interaction remain **implemented
   but unproven** until the connector exercises the repaired widget.
+- The first same-conversation retest reused ChatGPT's cached original template
+  and still showed the old waiting state. The resource URI is versioned as
+  `ui://devspace/workspace-app-v2.html`; CODEY NEW must be reconnected before
+  the target-perspective retest so ChatGPT discovers the new descriptor.

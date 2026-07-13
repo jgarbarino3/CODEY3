@@ -60,7 +60,7 @@ import {
 } from "./local-agent-availability.js";
 
 type Transport = StreamableHTTPServerTransport;
-const WORKSPACE_APP_URI = "ui://devspace/workspace-app.html";
+const WORKSPACE_APP_URI = "ui://devspace/workspace-app-v2.html";
 const WORKSPACE_APP_MANIFEST_ENTRY = "workspace-app.html";
 const WRITE_TOOL_ANNOTATIONS = {
   readOnlyHint: false,
