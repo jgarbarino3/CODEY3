@@ -116,3 +116,22 @@
 - The current temporary connector URL is
   `https://compatible-obtaining-repair-doubt.trycloudflare.com/mcp`.
 - CODEY 2 remained untouched.
+
+## User-invoked Desktop launcher
+
+- Added a repo-owned CODEY 3 launcher and installed a separate executable copy
+  at `/Users/joegarbarino/Desktop/ChatGPT + CODEY 3 Preview.command`.
+- The launcher owns only CODEY 3 PID files, logs, port 7679, isolated config,
+  temporary tunnel, and OAuth owner-code clipboard flow. It refuses to replace
+  an unknown listener and does not modify CODEY 2's LaunchAgent or ngrok tunnel.
+- A healthy existing public endpoint is reused. After reboot, the launcher
+  requests a new Cloudflare Quick Tunnel URL, waits for a registered connection,
+  retries from automatic/QUIC transport to HTTP/2, updates only CODEY 3's
+  `publicBaseUrl`, starts the preview, and checks local and public health.
+- Shell syntax validation passed. The real launcher started CODEY 3 locally and
+  local `/healthz` returned `{"ok":true,"name":"codey3"}`. The isolated OAuth
+  owner code was copied to the macOS clipboard without being printed.
+- On the 2026-07-13 network, Cloudflare port 7844 was reset for both QUIC and
+  HTTP/2. CODEY 2's existing ngrok endpoint remained online and was deliberately
+  not reused or replaced. Public launcher recovery is **implemented but
+  unproven** until the network permits a Cloudflare edge connection.
