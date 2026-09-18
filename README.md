@@ -8,6 +8,16 @@ It was seeded from the known-working CODEY 2 commit
 `4b7e2a8a61d360cf6ec007b6c6c2a7cf240f7df1`. CODEY 2 remains a separate,
 untouched fallback product.
 
+## Windows: let Codex set it up
+
+**[Complete Windows + Codex setup guide](docs/windows-setup.md)** — includes a
+copyable Codex prompt, prerequisites, your own ngrok tunnel, OAuth connection,
+start/stop commands, verification, and troubleshooting.
+
+Each person runs CODEY and a tunnel on their own computer, with their own
+credentials and approved project folders. Use this repository's source; the
+upstream DevSpace npm installation below does not include CODEY 3.
+
 ## Isolated preview
 
 ```bash

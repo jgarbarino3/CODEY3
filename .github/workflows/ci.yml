@@ -45,5 +45,8 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: CODEY 3 startup and OAuth boundary
+        run: npm run test:preview-startup
+
       - name: Doctor
         run: node dist/cli.js doctor

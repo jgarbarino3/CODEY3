@@ -5,3 +5,5 @@ releases/
 *.log
 .codey-preview/
 .codey3-preview/
+
+.DS_Store
